@@ -1,0 +1,369 @@
+{
+  "name": "Construction Dashboard — T2 Reusable Template",
+  "nodes": [
+    {
+      "id": "webhook-foreman-update",
+      "name": "Webhook: Foreman Update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "CONFIGURE-WEBHOOK-ID",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "CONFIGURE-PATH",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "webhook-new-job",
+      "name": "Webhook: New Job Created",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 400],
+      "webhookId": "CONFIGURE-WEBHOOK-ID-NEW",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "CONFIGURE-PATH-NEW",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "code-parse-foreman",
+      "name": "Parse Foreman Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "parameters": {
+        "jsCode": "// Parse incoming foreman update — supports Tally, Typeform, and direct JSON\nconst raw = $input.item.json.body || $input.item.json;\n\nlet jobSite = '', percentComplete = 0, blockers = '', photoUrl = '',\n    foremanName = '', foremanNote = '', jobId = '', updateDate = '';\n\ntry {\n  if (raw.fields && Array.isArray(raw.fields)) {\n    const f = raw.fields;\n    const find = (kw) => { const m = f.find(x => x.label && x.label.toLowerCase().includes(kw)); return m ? String(m.value || '') : ''; };\n    jobSite = find('job') || find('site') || find('project');\n    percentComplete = parseInt(find('percent') || find('complete') || find('progress') || '0');\n    blockers = find('block') || find('issue');\n    photoUrl = find('photo') || find('image');\n    foremanName = find('foreman') || find('name');\n    foremanNote = find('note') || find('update') || find('comment');\n  } else {\n    jobSite = raw.job_site || raw.jobSite || raw.project || '';\n    percentComplete = parseInt(raw.percent_complete || raw.percentComplete || raw.progress || '0');\n    blockers = raw.blockers || raw.blocker || '';\n    photoUrl = raw.photo_url || raw.photoUrl || '';\n    foremanName = raw.foreman_name || raw.foremanName || '';\n    foremanNote = raw.foreman_note || raw.foremanNote || raw.note || raw.update || '';\n  }\n  jobId = raw.job_id || raw.jobId || 'JOB-UNKNOWN';\n  updateDate = raw.update_date || new Date().toISOString().split('T')[0];\n} catch(e) {\n  jobSite = raw.job_site || '';\n  percentComplete = parseInt(raw.percent_complete || '0');\n  updateDate = new Date().toISOString().split('T')[0];\n}\n\nreturn [{ json: {\n  job_id: jobId, job_site: jobSite, percent_complete: percentComplete,\n  blockers: blockers, photo_url: photoUrl, foreman_name: foremanName,\n  foreman_note: foremanNote, update_date: updateDate, received_at: new Date().toISOString()\n}}];"
+      }
+    },
+    {
+      "id": "code-parse-new-job",
+      "name": "Parse New Job Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 400],
+      "parameters": {
+        "jsCode": "const raw = $input.item.json.body || $input.item.json;\nreturn [{ json: {\n  job_id: raw.job_id || 'JOB-' + Date.now(),\n  job_site: raw.job_site || '',\n  job_type: raw.job_type || 'unknown',\n  client: raw.client || '',\n  foreman: raw.foreman || '',\n  contract_value: raw.contract_value || '',\n  start_date: raw.start_date || new Date().toISOString().split('T')[0],\n  target_end_date: raw.target_end_date || '',\n  permit_status: raw.permit_status || 'Pending',\n  compliance_tags: raw.compliance_tags || [],\n  reporting_cadence: raw.reporting_cadence || 'weekly',\n  client_email: raw.client_email || '',\n  created_at: new Date().toISOString()\n}}];"
+      }
+    },
+    {
+      "id": "http-classify",
+      "name": "AI Classify Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "x-api-key", "value": "sk-ant-CONFIGURE-YOUR-ANTHROPIC-KEY-HERE" },
+          { "name": "anthropic-version", "value": "2023-06-01" }
+        ]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ \"model\": \"claude-sonnet-4-20250514\", \"max_tokens\": 600, \"messages\": [{ \"role\": \"user\", \"content\": \"Classify this construction foreman update. Return ONLY valid JSON.\\n\\nJOB SITE: \" + $('Parse Foreman Update').item.json.job_site + \"\\nFOREMAN NOTE: \" + ($('Parse Foreman Update').item.json.foreman_note || 'No note') + \"\\nBLOCKERS: \" + ($('Parse Foreman Update').item.json.blockers || 'None') + \"\\n\\nJob types: hospital | school | tenant_improvement | flood_restoration | maintenance | commercial\\n\\nReturn: {\\\"job_type\\\":\\\"\\\",\\\"status\\\":\\\"on_track|at_risk|blocked\\\",\\\"compliance_flags\\\":[],\\\"permit_alert\\\":\\\"yes|no\\\",\\\"stalled_detection\\\":\\\"yes|no\\\",\\\"foreman_summary\\\":\\\"\\\",\\\"client_summary\\\":\\\"\\\",\\\"next_milestone\\\":\\\"\\\",\\\"risk_factors\\\":[],\\\"report_cadence_override\\\":\\\"inherit|daily|weekly|bi-weekly|monthly|per_milestone\\\"}\" }]) }}",
+        "options": { "timeout": 30000 }
+      }
+    },
+    {
+      "id": "http-classify-new",
+      "name": "AI Classify New Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 400],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "x-api-key", "value": "sk-ant-CONFIGURE-YOUR-ANTHROPIC-KEY-HERE" },
+          { "name": "anthropic-version", "value": "2023-06-01" }
+        ]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ \"model\": \"claude-sonnet-4-20250514\", \"max_tokens\": 500, \"messages\": [{ \"role\": \"user\", \"content\": \"Classify this new construction job. Return ONLY valid JSON.\\n\\nSITE: \" + $('Parse New Job Data').item.json.job_site + \"\\nCLIENT: \" + ($('Parse New Job Data').item.json.client || '') + \"\\nDESC: \" + ($('Parse New Job Data').item.json.foreman_note || 'New project') + \"\\n\\nReturn: {\\\"job_type\\\":\\\"\\\",\\\"compliance_tags\\\":[],\\\"permit_required\\\":[],\\\"reporting_cadence\\\":\\\"\\\",\\\"vincent_alert\\\":\\\"yes|no\\\"}\" }]) }}",
+        "options": { "timeout": 30000 }
+      }
+    },
+    {
+      "id": "code-process",
+      "name": "Build Canonical Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0],
+      "parameters": {
+        "jsCode": "// CANONICAL NODE — all downstream nodes reference $('Build Canonical Record')\nconst ai = (() => {\n  try {\n    const r = $('AI Classify Job').item.json;\n    const c = (r.content && r.content[0]) ? r.content[0].text : '';\n    const m = c.match(/\\{[\\s\\S]*\\}/);\n    return JSON.parse(m ? m[0] : c);\n  } catch(e) { return null; }\n})();\nconst input = $('Parse Foreman Update').item.json;\n\nconst jobType = ai ? ai.job_type : 'unknown';\nconst status = ai ? ai.status : (input.blockers ? 'blocked' : 'on_track');\nconst statusColor = status === 'blocked' ? '🔴' : status === 'at_risk' ? '🟠' : '🟢';\nconst complianceFlags = (ai && ai.compliance_flags) ? ai.compliance_flags : [];\nconst permitAlert = ai ? ai.permit_alert : 'no';\nconst stalled = ai ? ai.stalled_detection : 'no';\nconst ownerAlertNeeded = status === 'blocked' || stalled === 'yes' || permitAlert === 'yes';\n\nconst subject = input.job_site + ' — ' + jobType.replace('_',' ').toUpperCase() + ' Update (' + input.percent_complete + '%)';\nconst body = '<h2>' + jobType.replace('_',' ').toUpperCase() + ' Update</h2><p><b>Project:</b> ' + input.job_site + '</p><p><b>Progress:</b> ' + input.percent_complete + '%</p><p><b>Status:</b> ' + statusColor + ' ' + status.toUpperCase() + '</p><hr><p>' + (ai ? ai.client_summary : 'Work is progressing.') + '</p><p><b>Next:</b> ' + (ai ? ai.next_milestone : 'TBD') + '</p>';\n\nconst alertSubject = (status==='blocked' ? '🔴 BLOCKED: ' : stalled==='yes' ? '🟠 STALLED: ' : '🔔 PERMIT: ') + input.job_site;\nconst alertBody = '<h2 style=\"color:' + (status==='blocked'?'red':'#e67e00') + ';\">' + input.job_site + '</h2><p><b>Foreman:</b> ' + input.foreman_name + '</p><p><b>Status:</b> ' + statusColor + ' ' + status.toUpperCase() + '</p>' + (input.blockers ? '<p><b>Blocker:</b> ' + input.blockers + '</p>' : '') + '<p><b>Summary:</b> ' + (ai ? ai.foreman_summary : input.foreman_note) + '</p>';\n\nreturn [{ json: {\n  job_id: input.job_id, job_site: input.job_site, percent_complete: input.percent_complete,\n  blockers: input.blockers, photo_url: input.photo_url, foreman_name: input.foreman_name,\n  foreman_note: input.foreman_note, update_date: input.update_date,\n  job_type: jobType, status: status, status_emoji: statusColor,\n  compliance_flags: complianceFlags, permit_alert: permitAlert,\n  stalled_detection: stalled, owner_alert_needed: ownerAlertNeeded,\n  foreman_summary: ai ? ai.foreman_summary : input.foreman_note,\n  client_summary: ai ? ai.client_summary : 'Work is progressing.',\n  next_milestone: ai ? ai.next_milestone : 'TBD',\n  risk_factors: (ai && ai.risk_factors) ? ai.risk_factors : (input.blockers ? [input.blockers] : []),\n  client_email_subject: subject, client_email_body: body,\n  owner_alert_subject: alertSubject, owner_alert_body: alertBody,\n  processed_at: new Date().toISOString()\n}}];"
+      }
+    },
+    {
+      "id": "code-process-new",
+      "name": "Build New Job Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 400],
+      "parameters": {
+        "jsCode": "const ai = (() => { try { const r=$('AI Classify New Job').item.json; const c=(r.content&&r.content[0])?r.content[0].text:''; const m=c.match(/\\{[\\s\\S]*\\}/); return JSON.parse(m?m[0]:c); } catch(e){ return null; } })();\nconst i = $('Parse New Job Data').item.json;\nreturn [{ json: {\n  job_id: i.job_id, job_site: i.job_site,\n  job_type: ai ? ai.job_type : i.job_type,\n  client: i.client, foreman: i.foreman,\n  contract_value: i.contract_value,\n  start_date: i.start_date, target_end_date: i.target_end_date,\n  permit_status: i.permit_status,\n  permits_required: (ai && ai.permit_required) ? ai.permit_required : (i.permits_required || []),\n  compliance_tags: (ai && ai.compliance_tags) ? ai.compliance_tags : (i.compliance_tags || []),\n  reporting_cadence: ai ? ai.reporting_cadence : (i.reporting_cadence || 'weekly'),\n  client_email: i.client_email,\n  vincent_alert: ai ? ai.vincent_alert : 'no',\n  status: 'on_track', percent_complete: 0,\n  created_at: i.created_at\n}}];"
+      }
+    },
+    {
+      "id": "code-prep-sheets",
+      "name": "Prep Job Log Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 0],
+      "parameters": {
+        "jsCode": "const d = $('Build Canonical Record').item.json;\nreturn [{ json: {\n  'Date': d.update_date, 'Job ID': d.job_id, 'Job Site': d.job_site,\n  'Job Type': d.job_type, 'Foreman': d.foreman_name,\n  'Percent Complete': String(d.percent_complete),\n  'Status': d.status.toUpperCase(), 'Status Emoji': d.status_emoji,\n  'Foreman Summary': (d.foreman_summary||'').substring(0,300),\n  'Client Summary': (d.client_summary||'').substring(0,300),\n  'Blockers': d.blockers || 'None',\n  'Compliance Flags': (d.compliance_flags||[]).join(', '),\n  'Permit Alert': d.permit_alert, 'Stalled': d.stalled_detection,\n  'Next Milestone': (d.next_milestone||'').substring(0,200),\n  'Client Notified': 'Yes', 'Owner Alert': d.owner_alert_needed ? 'Yes' : 'No',\n  'Photo URL': d.photo_url || ''\n}}];"
+      }
+    },
+    {
+      "id": "code-prep-comp",
+      "name": "Prep Compliance Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, -200],
+      "parameters": {
+        "jsCode": "const d = $('Build Canonical Record').item.json;\nconst flags = d.compliance_flags || [];\nif (flags.length === 0) return [];\nreturn flags.map(f => ({ json: {\n  'Date': d.update_date, 'Job ID': d.job_id,\n  'Job Site': d.job_site, 'Job Type': d.job_type,\n  'Compliance Flag': f, 'Status': d.status, 'Reported': 'Yes'\n}}));"
+      }
+    },
+    {
+      "id": "code-prep-pipeline",
+      "name": "Prep Pipeline Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 400],
+      "parameters": {
+        "jsCode": "const d = $('Build New Job Record').item.json;\nreturn [{ json: {\n  'Job ID': d.job_id, 'Job Site': d.job_site, 'Job Type': d.job_type,\n  'Client': d.client, 'Foreman': d.foreman, 'Contract Value': d.contract_value,\n  'Start Date': d.start_date, 'Target End Date': d.target_end_date,\n  'Permit Status': d.permit_status,\n  'Permits Required': (d.permits_required||[]).join(', '),\n  'Compliance Tags': (d.compliance_tags||[]).join(', '),\n  'Reporting Cadence': d.reporting_cadence,\n  'Client Email': d.client_email,\n  'Vincent Alert': d.vincent_alert,\n  'Current Status': 'on_track', 'Percent Complete': '0'\n}}];"
+      }
+    },
+    {
+      "id": "sheets-job",
+      "name": "Append Job Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 0],
+      "onError": "continueRegularOutput",
+      "credentials": { "googleSheetsOAuth2Api": { "id": "CONFIGURE_ME", "name": "Google Sheets account" } },
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "CONFIGURE-SHEET-ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Job Log", "mode": "name" },
+        "columns": { "mappingMode": "autoMapInputData", "matchingColumns": [], "schema": [] },
+        "options": {}
+      }
+    },
+    {
+      "id": "sheets-comp",
+      "name": "Append Compliance",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, -200],
+      "onError": "continueRegularOutput",
+      "credentials": { "googleSheetsOAuth2Api": { "id": "CONFIGURE_ME", "name": "Google Sheets account" } },
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "CONFIGURE-SHEET-ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Compliance Log", "mode": "name" },
+        "columns": { "mappingMode": "autoMapInputData", "matchingColumns": [], "schema": [] },
+        "options": {}
+      }
+    },
+    {
+      "id": "sheets-pipeline",
+      "name": "Add to Pipeline",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 400],
+      "onError": "continueRegularOutput",
+      "credentials": { "googleSheetsOAuth2Api": { "id": "CONFIGURE_ME", "name": "Google Sheets account" } },
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "CONFIGURE-PIPELINE-SHEET-ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Pipeline", "mode": "name" },
+        "columns": { "mappingMode": "autoMapInputData", "matchingColumns": [], "schema": [] },
+        "options": {}
+      }
+    },
+    {
+      "id": "code-email",
+      "name": "Prep Client Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 0],
+      "parameters": {
+        "jsCode": "const d = $('Build Canonical Record').item.json;\nreturn [{ json: {\n  send_to: 'CONFIGURE-CLIENT-EMAIL',\n  email_subject: d.client_email_subject,\n  email_body: d.client_email_body\n}}];"
+      }
+    },
+    {
+      "id": "gmail-client",
+      "name": "Send Client Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1540, 0],
+      "onError": "continueRegularOutput",
+      "credentials": { "gmailOAuth2": { "id": "CONFIGURE_ME", "name": "Gmail account" } },
+      "parameters": {
+        "resource": "message", "operation": "send",
+        "sendTo": "={{ $json.send_to }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailType": "html", "message": "={{ $json.email_body }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "if-alert",
+      "name": "Alert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1760, 0],
+      "parameters": {
+        "conditions": { "combinator": "and", "conditions": [
+          { "id": "c1", "leftValue": "={{ $('Build Canonical Record').item.json.owner_alert_needed }}", "rightValue": "true", "operator": { "type": "string", "operation": "equals" }}
+        ], "options": { "caseSensitive": true }},
+        "options": {}
+      }
+    },
+    {
+      "id": "code-owner",
+      "name": "Prep Owner Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, -180],
+      "parameters": {
+        "jsCode": "const d = $('Build Canonical Record').item.json;\nreturn [{ json: {\n  send_to: 'CONFIGURE-OWNER-EMAIL',\n  email_subject: d.owner_alert_subject,\n  email_body: d.owner_alert_body\n}}];"
+      }
+    },
+    {
+      "id": "gmail-owner",
+      "name": "Alert Owner",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [2200, -180],
+      "onError": "continueRegularOutput",
+      "credentials": { "gmailOAuth2": { "id": "CONFIGURE_ME", "name": "Gmail account" } },
+      "parameters": {
+        "resource": "message", "operation": "send",
+        "sendTo": "={{ $json.send_to }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailType": "html", "message": "={{ $json.email_body }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "if-new-alert",
+      "name": "Vincent Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1320, 400],
+      "parameters": {
+        "conditions": { "combinator": "and", "conditions": [
+          { "id": "c1", "leftValue": "={{ $('Build New Job Record').item.json.vincent_alert }}", "rightValue": "yes", "operator": { "type": "string", "operation": "equals" }}
+        ], "options": { "caseSensitive": true }},
+        "options": {}
+      }
+    },
+    {
+      "id": "gmail-new-vincent",
+      "name": "New Job Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1540, 400],
+      "onError": "continueRegularOutput",
+      "credentials": { "gmailOAuth2": { "id": "CONFIGURE_ME", "name": "Gmail account" } },
+      "parameters": {
+        "resource": "message", "operation": "send",
+        "sendTo": "CONFIGURE-OWNER-EMAIL",
+        "subject": "={{ 'New ' + $('Build New Job Record').item.json.job_type.replace('_',' ') + ' job: ' + $('Build New Job Record').item.json.job_site }}",
+        "emailType": "html",
+        "message": "={{ '<h2>New Job</h2><p><b>ID:</b> ' + $('Build New Job Record').item.json.job_id + '</p><p><b>Site:</b> ' + $('Build New Job Record').item.json.job_site + '</p><p><b>Type:</b> ' + $('Build New Job Record').item.json.job_type + '</p><p><b>Compliance:</b> ' + ($('Build New Job Record').item.json.compliance_tags||[]).join(', ') + '</p>' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "code-summary",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2420, 0],
+      "parameters": {
+        "jsCode": "const d = $('Build Canonical Record').item.json;\nreturn [{ json: {\n  success: true, job_id: d.job_id, job_site: d.job_site, job_type: d.job_type,\n  percent_complete: d.percent_complete, status: d.status,\n  status_emoji: d.status_emoji, stalled: d.stalled_detection === 'yes',\n  permit_alert: d.permit_alert === 'yes',\n  foreman_summary: d.foreman_summary, client_summary: d.client_summary,\n  next_milestone: d.next_milestone,\n  compliance_flags: d.compliance_flags,\n  actions: ['AI classified: ' + d.status.toUpperCase() + '/' + d.job_type.toUpperCase(), 'Logged to Job Log', 'Client report sent', d.owner_alert_needed ? 'OWNER ALERTED' : 'No alert'],\n  processed_at: d.processed_at\n}}];"
+      }
+    },
+    {
+      "id": "code-summary-new",
+      "name": "Summary (New Job)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 400],
+      "parameters": {
+        "jsCode": "const d = $('Build New Job Record').item.json;\nreturn [{ json: {\n  success: true, job_id: d.job_id, job_site: d.job_site, job_type: d.job_type,\n  compliance_tags: d.compliance_tags, permits_required: d.permits_required,\n  reporting_cadence: d.reporting_cadence,\n  actions: ['Added to Pipeline', d.vincent_alert==='yes'?'Vincent alerted':'No Vincent alert'],\n  created_at: d.created_at\n}}];"
+      }
+    },
+    {
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 700],
+      "parameters": {}
+    },
+    {
+      "id": "code-error",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 700],
+      "parameters": {
+        "jsCode": "const e = $input.item.json;\nreturn [{ json: { error: true, error_message: e.message||'Unknown', workflow: 'Construction Dashboard Template', timestamp: new Date().toISOString() }}];"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Foreman Update": { "main": [[{ "node": "Parse Foreman Update", "type": "main", "index": 0 }]] },
+    "Parse Foreman Update": { "main": [[{ "node": "AI Classify Job", "type": "main", "index": 0 }]] },
+    "AI Classify Job": { "main": [[{ "node": "Build Canonical Record", "type": "main", "index": 0 }]] },
+    "Build Canonical Record": { "main": [[{ "node": "Prep Job Log Row", "type": "main", "index": 0 }]] },
+    "Prep Job Log Row": { "main": [[{ "node": "Append Job Log", "type": "main", "index": 0 }]] },
+    "Append Job Log": { "main": [
+      [{ "node": "Prep Compliance Row", "type": "main", "index": 0 }],
+      [{ "node": "Prep Client Email", "type": "main", "index": 0 }]
+    ]},
+    "Prep Compliance Row": { "main": [[{ "node": "Append Compliance", "type": "main", "index": 0 }]] },
+    "Append Compliance": { "main": [[{ "node": "Prep Client Email", "type": "main", "index": 0 }]] },
+    "Prep Client Email": { "main": [[{ "node": "Send Client Report", "type": "main", "index": 0 }]] },
+    "Send Client Report": { "main": [[{ "node": "Alert Needed?", "type": "main", "index": 0 }]] },
+    "Alert Needed?": { "main": [
+      [{ "node": "Prep Owner Alert", "type": "main", "index": 0 }],
+      [{ "node": "Summary", "type": "main", "index": 0 }]
+    ]},
+    "Prep Owner Alert": { "main": [[{ "node": "Alert Owner", "type": "main", "index": 0 }]] },
+    "Alert Owner": { "main": [[{ "node": "Summary", "type": "main", "index": 0 }]] },
+    "Webhook: New Job Created": { "main": [[{ "node": "Parse New Job Data", "type": "main", "index": 0 }]] },
+    "Parse New Job Data": { "main": [[{ "node": "AI Classify New Job", "type": "main", "index": 0 }]] },
+    "AI Classify New Job": { "main": [[{ "node": "Build New Job Record", "type": "main", "index": 0 }]] },
+    "Build New Job Record": { "main": [
+      [{ "node": "Prep Pipeline Row", "type": "main", "index": 0 }],
+      [{ "node": "Vincent Alert?", "type": "main", "index": 0 }]
+    ]},
+    "Prep Pipeline Row": { "main": [[{ "node": "Add to Pipeline", "type": "main", "index": 0 }]] },
+    "Add to Pipeline": { "main": [[{ "node": "Summary (New Job)", "type": "main", "index": 0 }]] },
+    "Vincent Alert?": { "main": [
+      [{ "node": "New Job Alert", "type": "main", "index": 0 }],
+      [{ "node": "Summary (New Job)", "type": "main", "index": 0 }]
+    ]},
+    "New Job Alert": { "main": [[{ "node": "Summary (New Job)", "type": "main", "index": 0 }]] },
+    "Error Trigger": { "main": [[{ "node": "Error Handler", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

@@ -1,0 +1,472 @@
+{
+  "name": "G-Net Construction Dashboard — Multi-Type Job Tracker",
+  "nodes": [
+    {
+      "id": "webhook-foreman-update",
+      "name": "Webhook: Foreman Update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "gnet-construction-dashboard",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gnet-foreman-update",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "webhook-new-job",
+      "name": "Webhook: New Job Created",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 400],
+      "webhookId": "gnet-new-job",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gnet-new-job",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "code-parse-foreman",
+      "name": "Parse Foreman Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "parameters": {
+        "jsCode": "// Parse incoming foreman update\nconst raw = $input.item.json.body || $input.item.json;\n\nconst jobSite = raw.job_site || raw.jobSite || '';\nconst percentComplete = parseInt(raw.percent_complete || raw.percentComplete || raw.progress || '0');\nconst blockers = raw.blockers || raw.blocker || '';\nconst photoUrl = raw.photo_url || raw.photoUrl || raw.photo || '';\nconst foremanName = raw.foreman_name || raw.foremanName || raw.foreman || '';\nconst foremanNote = raw.foreman_note || raw.foremanNote || raw.note || raw.notes || raw.update || '';\nconst jobId = raw.job_id || raw.jobId || 'JOB-UNKNOWN';\nconst updateDate = raw.update_date || raw.updateDate || new Date().toISOString().split('T')[0];\n\nreturn [{ json: {\n  job_id: jobId,\n  job_site: jobSite,\n  percent_complete: percentComplete,\n  blockers: blockers,\n  photo_url: photoUrl,\n  foreman_name: foremanName,\n  foreman_note: foremanNote,\n  update_date: updateDate,\n  received_at: new Date().toISOString()\n}}];"
+      }
+    },
+    {
+      "id": "code-parse-new-job",
+      "name": "Parse New Job Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 400],
+      "parameters": {
+        "jsCode": "// Parse new job creation payload\nconst raw = $input.item.json.body || $input.item.json;\n\nreturn [{ json: {\n  job_id: raw.job_id || 'JOB-' + Date.now(),\n  job_site: raw.job_site || raw.jobSite || '',\n  job_type: raw.job_type || 'unknown',\n  client: raw.client || '',\n  foreman: raw.foreman || '',\n  contract_value: raw.contract_value || '',\n  start_date: raw.start_date || new Date().toISOString().split('T')[0],\n  target_end_date: raw.target_end_date || '',\n  permit_status: raw.permit_status || 'Pending',\n  compliance_tags: raw.compliance_tags || [],\n  reporting_cadence: raw.reporting_cadence || 'weekly',\n  client_email: raw.client_email || '',\n  created_at: new Date().toISOString()\n}}];"
+      }
+    },
+    {
+      "id": "http-classify-job",
+      "name": "AI Classify Job Type + Compliance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "sk-ant-CONFIGURE-YOUR-ANTHROPIC-KEY-HERE" },
+            { "name": "anthropic-version", "value": "2023-06-01" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ \"model\": \"claude-sonnet-4-20250514\", \"max_tokens\": 600, \"messages\": [{ \"role\": \"user\", \"content\": \"You are an AI operations assistant for G-Net Construction Corp., a multi-type NYC general contractor. Classify this foreman update and return ONLY valid JSON.\\n\\nJOB SITE: \" + $('Parse Foreman Update').item.json.job_site + \"\\nFOREMAN NOTE: \" + ($('Parse Foreman Update').item.json.foreman_note || 'No note') + \"\\nBLOCKERS: \" + ($('Parse Foreman Update').item.json.blockers || 'None') + \"\\n\\nJob types: hospital | school | tenant_improvement | flood_restoration | maintenance | commercial\\n\\nReturn JSON:\\n{\\n  \\\"job_type\\\": \\\"one of the 6 types above\\\",\\n  \\\"status\\\": \\\"on_track\\\" | \\\"at_risk\\\" | \\\"blocked\\\",\\n  \\\"compliance_flags\\\": [\\\"array of compliance tags triggered this week\\\"],\\n  \\\"permit_alert\\\": \\\"yes\\\" if DOB/DOH/DEP/FDNY action needed this period, else \\\"no\\\",\\n  \\\"stalled_detection\\\": \\\"yes\\\" if % hasn't moved >5pts vs prior update, else \\\"no\\\",\\n  \\\"foreman_summary\\\": \\\"one sentence internal summary\\\",\\n  \\\"client_summary\\\": \\\"2-3 sentences plain English for property owner — no jargon\\\",\\n  \\\"next_milestone\\\": \\\"what happens next\\\",\\n  \\\"risk_factors\\\": [\\\"array of risk factors\\\"],\\n  \\\"report_cadence_override\\\": \\\"daily\\\" | \\\"weekly\\\" | \\\"bi-weekly\\\" | \\\"monthly\\\" | \\\"per_milestone\\\" | \\\"inherit\\\"\\n}\" }]) }}",
+        "options": { "timeout": 30000 }
+      }
+    },
+    {
+      "id": "http-new-job-classify",
+      "name": "AI Classify New Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 400],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "sk-ant-CONFIGURE-YOUR-ANTHROPIC-KEY-HERE" },
+            { "name": "anthropic-version", "value": "2023-06-01" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ \"model\": \"claude-sonnet-4-20250514\", \"max_tokens\": 500, \"messages\": [{ \"role\": \"user\", \"content\": \"Classify this new construction job and return ONLY valid JSON.\\n\\nJOB SITE: \" + $('Parse New Job Data').item.json.job_site + \"\\nCLIENT: \" + ($('Parse New Job Data').item.json.client || '') + \"\\nPROJECT DESC: \" + ($('Parse New Job Data').item.json.foreman_note || 'New project') + \"\\n\\nReturn JSON:\\n{\\n  \\\"job_type\\\": \\\"hospital\\\" | \\\"school\\\" | \\\"tenant_improvement\\\" | \\\"flood_restoration\\\" | \\\"maintenance\\\" | \\\"commercial\\\",\\n  \\\"compliance_tags\\\": [\\\"array of required compliance tags based on job type\\\"],\\n  \\\"permit_required\\\": [\\\"array of permit types likely needed\\\"],\\n  \\\"reporting_cadence\\\": \\\"daily\\\" | \\\"weekly\\\" | \\\"bi-weekly\\\" | \\\"monthly\\\" | \\\"per_milestone\\\",\\n  \\\"estimated_report_recipients\\\": \\\"who receives status updates\\\",\\n  \\\"vincent_alert\\\": \\\"yes\\\" if hospital, school, or flood restoration (Vincent\\u2019s RA involvement needed), else \\\"no\\\"\\n}\" }]) }}",
+        "options": { "timeout": 30000 }
+      }
+    },
+    {
+      "id": "code-process-foreman-update",
+      "name": "Build Canonical Job Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0],
+      "parameters": {
+        "jsCode": "// CANONICAL NODE — all downstream nodes reference this\nconst ai = (() => {\n  try {\n    const r = $('AI Classify Job Type + Compliance').item.json;\n    const c = (r.content && r.content[0]) ? r.content[0].text : '';\n    const m = c.match(/\\{[\\s\\S]*\\}/);\n    return JSON.parse(m ? m[0] : c);\n  } catch(e) { return null; }\n})();\n\nconst input = $('Parse Foreman Update').item.json;\n\nconst jobType = ai ? ai.job_type : 'unknown';\nconst status = ai ? ai.status : (input.blockers ? 'blocked' : 'on_track');\nconst complianceFlags = ai && ai.compliance_flags ? ai.compliance_flags : [];\nconst permitAlert = ai ? ai.permit_alert : 'no';\nconst stalledDetection = ai ? ai.stalled_detection : 'no';\nconst foremanSummary = ai ? ai.foreman_summary : input.foreman_note;\nconst clientSummary = ai ? ai.client_summary : 'Work is progressing on ' + input.job_site + '.';\nconst nextMilestone = ai ? ai.next_milestone : 'TBD';\nconst riskFactors = ai && ai.risk_factors ? ai.risk_factors : (input.blockers ? [input.blockers] : []);\n\n// Status color for dashboard\nconst statusColor = status === 'blocked' ? '🔴' : status === 'at_risk' ? '🟠' : '🟢';\n\n// Compliance report body\nconst complianceReport = complianceFlags.length > 0\n  ? '<p><b>Compliance items addressed this period:</b></p><ul>' + complianceFlags.map(f => '<li>' + f + '</li>').join('') + '</ul>'\n  : '<p>No compliance items triggered this period.</p>';\n\n// Client report — type-specific formatting\nconst jobTypeLabel = jobType.replace('_', ' ').toUpperCase();\nconst clientReportSubject = input.job_site + ' — ' + jobTypeLabel + ' Progress Update (' + input.percent_complete + '%)';\nconst clientReportBody = '<h2>' + jobTypeLabel + ' Progress Update</h2>' +\n  '<p><b>Project:</b> ' + input.job_site + '</p>' +\n  '<p><b>Overall Progress:</b> ' + input.percent_complete + '% complete</p>' +\n  '<p><b>Status:</b> ' + statusColor + ' ' + status.replace('_', ' ').toUpperCase() + '</p>' +\n  '<hr>' +\n  '<p>' + clientSummary + '</p>' +\n  '<p><b>Next Milestone:</b> ' + nextMilestone + '</p>' +\n  '<hr>' +\n  complianceReport +\n  '<hr><p style=\"color:#888;font-size:12px;\">This update was generated automatically from your contractor\\'s field report.</p>';\n\n// Owner alert (Vincent) — triggered for blocked, stalled, or permit alerts\nconst ownerAlertNeeded = status === 'blocked' || stalledDetection === 'yes' || permitAlert === 'yes';\nconst ownerAlertSubject = ownerAlertNeeded\n  ? (status === 'blocked' ? '🔴 BLOCKED: ' : stalledDetection === 'yes' ? '🟠 STALLED: ' : '🔔 PERMIT ALERT: ') + input.job_site\n  : 'Job Status Update: ' + input.job_site;\nconst ownerAlertBody = '<h2 style=\"color:' + (status === 'blocked' ? 'red' : '#e67e00') + ';\">' + jobTypeLabel + ' — ' + input.job_site + '</h2>' +\n  '<p><b>Foreman:</b> ' + input.foreman_name + '</p>' +\n  '<p><b>Progress:</b> ' + input.percent_complete + '%</p>' +\n  '<p><b>Status:</b> ' + statusColor + ' ' + status.replace('_', ' ').toUpperCase() + '</p>' +\n  (input.blockers ? '<p><b>Blocker:</b> ' + input.blockers + '</p>' : '') +\n  (stalledDetection === 'yes' ? '<p style=\"color:#e67e00;\"><b>⚠ Stalled: No significant progress since last update.</b></p>' : '') +\n  (permitAlert === 'yes' ? '<p style=\"color:#e67e00;\"><b>🔔 Permit action required — review permit tracker.</b></p>' : '') +\n  '<p><b>Foreman Summary:</b> ' + foremanSummary + '</p>' +\n  (riskFactors.length > 0 ? '<p><b>Risk Factors:</b></p><ul>' + riskFactors.map(r => '<li>' + r + '</li>').join('') + '</ul>' : '') +\n  '<p><b>Next Milestone:</b> ' + nextMilestone + '</p>';\n\nreturn [{ json: {\n  // Raw inputs\n  job_id: input.job_id,\n  job_site: input.job_site,\n  percent_complete: input.percent_complete,\n  blockers: input.blockers,\n  photo_url: input.photo_url,\n  foreman_name: input.foreman_name,\n  foreman_note: input.foreman_note,\n  update_date: input.update_date,\n  received_at: input.received_at,\n  // AI classified\n  job_type: jobType,\n  status: status,\n  status_emoji: statusColor,\n  compliance_flags: complianceFlags,\n  permit_alert: permitAlert,\n  stalled_detection: stalledDetection,\n  foreman_summary: foremanSummary,\n  client_summary: clientSummary,\n  next_milestone: nextMilestone,\n  risk_factors: riskFactors,\n  report_cadence_override: ai && ai.report_cadence_override ? ai.report_cadence_override : 'inherit',\n  // Email content\n  client_email_subject: clientReportSubject,\n  client_email_body: clientReportBody,\n  owner_alert_subject: ownerAlertSubject,\n  owner_alert_body: ownerAlertBody,\n  owner_alert_needed: ownerAlertNeeded,\n  // Timestamps\n  processed_at: new Date().toISOString()\n}}];"
+      }
+    },
+    {
+      "id": "code-process-new-job",
+      "name": "Build New Job Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 400],
+      "parameters": {
+        "jsCode": "// Process new job creation — AI classified fields\nconst ai = (() => {\n  try {\n    const r = $('AI Classify New Job').item.json;\n    const c = (r.content && r.content[0]) ? r.content[0].text : '';\n    const m = c.match(/\\{[\\s\\S]*\\}/);\n    return JSON.parse(m ? m[0] : c);\n  } catch(e) { return null; }\n})();\n\nconst input = $('Parse New Job Data').item.json;\n\nconst jobType = ai ? ai.job_type : input.job_type;\nconst complianceTags = ai && ai.compliance_tags ? ai.compliance_tags : (input.compliance_tags || []);\nconst permits = ai && ai.permit_required ? ai.permit_required : (input.permit_required || []);\nconst cadence = ai && ai.reporting_cadence ? ai.reporting_cadence : (input.reporting_cadence || 'weekly');\nconst vincentAlert = ai ? ai.vincent_alert : 'no';\n\nreturn [{ json: {\n  job_id: input.job_id,\n  job_site: input.job_site,\n  job_type: jobType,\n  client: input.client,\n  foreman: input.foreman,\n  contract_value: input.contract_value,\n  start_date: input.start_date,\n  target_end_date: input.target_end_date,\n  permit_status: input.permit_status,\n  permits_required: permits,\n  compliance_tags: complianceTags,\n  reporting_cadence: cadence,\n  client_email: input.client_email,\n  vincent_alert: vincentAlert,\n  status: 'on_track',\n  percent_complete: 0,\n  created_at: input.created_at\n}}];"
+      }
+    },
+    {
+      "id": "code-prep-job-log",
+      "name": "Prep Job Log Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 0],
+      "parameters": {
+        "jsCode": "// Build row for Job Log Google Sheet\nconst d = $('Build Canonical Job Record').item.json;\nreturn [{ json: {\n  'Date': d.update_date || new Date().toISOString().split('T')[0],\n  'Job ID': d.job_id,\n  'Job Site': d.job_site || '',\n  'Job Type': d.job_type || '',\n  'Foreman': d.foreman_name || '',\n  'Percent Complete': String(d.percent_complete || 0),\n  'Status': (d.status || '').toUpperCase(),\n  'Status Emoji': d.status_emoji || '',\n  'Foreman Summary': (d.foreman_summary || '').substring(0, 300),\n  'Client Summary': (d.client_summary || '').substring(0, 300),\n  'Blockers': d.blockers || 'None',\n  'Compliance Flags': (d.compliance_flags || []).join(', '),\n  'Permit Alert': d.permit_alert || 'no',\n  'Stalled Detection': d.stalled_detection || 'no',\n  'Next Milestone': (d.next_milestone || '').substring(0, 200),\n  'Client Notified': 'Yes',\n  'Owner Alert Sent': d.owner_alert_needed ? 'Yes' : 'No',\n  'Photo URL': d.photo_url || ''\n}}];"
+      }
+    },
+    {
+      "id": "code-prep-compliance-log",
+      "name": "Prep Compliance Log Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, -200],
+      "parameters": {
+        "jsCode": "// Build compliance log row — only if flags exist\nconst d = $('Build Canonical Job Record').item.json;\nconst flags = d.compliance_flags || [];\nif (flags.length === 0) { return []; }\nreturn flags.map(flag => ({ json: {\n  'Date': new Date().toISOString().split('T')[0],\n  'Job ID': d.job_id,\n  'Job Site': d.job_site,\n  'Job Type': d.job_type,\n  'Compliance Flag': flag,\n  'Status': d.status,\n  'Reported': 'Yes'\n}}));"
+      }
+    },
+    {
+      "id": "code-prep-new-job-log",
+      "name": "Prep New Job Sheet Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 400],
+      "parameters": {
+        "jsCode": "// Build new job row for Pipeline Google Sheet\nconst d = $('Build New Job Record').item.json;\nreturn [{ json: {\n  'Job ID': d.job_id,\n  'Job Site': d.job_site,\n  'Job Type': d.job_type,\n  'Client': d.client,\n  'Foreman': d.foreman,\n  'Contract Value': d.contract_value,\n  'Start Date': d.start_date,\n  'Target End Date': d.target_end_date,\n  'Permit Status': d.permit_status,\n  'Permits Required': (d.permits_required || []).join(', '),\n  'Compliance Tags': (d.compliance_tags || []).join(', '),\n  'Reporting Cadence': d.reporting_cadence,\n  'Client Email': d.client_email,\n  'Vincent Alert': d.vincent_alert,\n  'Current Status': 'on_track',\n  'Percent Complete': '0',\n  'Created': d.created_at\n}}];"
+      }
+    },
+    {
+      "id": "sheets-job-log",
+      "name": "Append to Job Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 0],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CONFIGURE_ME",
+          "name": "Google Sheets account"
+        }
+      },
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "GNET-JOB-LOG-SHEET-ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Job Log", "mode": "name" },
+        "columns": { "mappingMode": "autoMapInputData", "matchingColumns": [], "schema": [] },
+        "options": {}
+      }
+    },
+    {
+      "id": "sheets-compliance-log",
+      "name": "Append Compliance Flags",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, -200],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CONFIGURE_ME",
+          "name": "Google Sheets account"
+        }
+      },
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "GNET-JOB-LOG-SHEET-ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Compliance Log", "mode": "name" },
+        "columns": { "mappingMode": "autoMapInputData", "matchingColumns": [], "schema": [] },
+        "options": {}
+      }
+    },
+    {
+      "id": "sheets-new-job",
+      "name": "Add to Pipeline",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 400],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CONFIGURE_ME",
+          "name": "Google Sheets account"
+        }
+      },
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "GNET-PIPELINE-SHEET-ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Pipeline", "mode": "name" },
+        "columns": { "mappingMode": "autoMapInputData", "matchingColumns": [], "schema": [] },
+        "options": {}
+      }
+    },
+    {
+      "id": "code-prep-client-email",
+      "name": "Prep Client Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 0],
+      "parameters": {
+        "jsCode": "// Extract client notification data from canonical record\nconst d = $('Build Canonical Job Record').item.json;\n// Client email would come from a lookup in the pipeline sheet\n// For now: email derived from job type\nconst clientEmailMap = {\n  hospital: 'facilities@placeholder-hospital.com',\n  school: 'admin@placeholder-school.edu',\n  tenant_improvement: 'property@placeholder-landlord.com',\n  flood_restoration: 'claims@placeholder-insurance.com',\n  maintenance: 'pm@placeholder-pm.com',\n  commercial: 'owner@placeholder-owner.com'\n};\nreturn [{ json: {\n  send_to: clientEmailMap[d.job_type] || 'owner@gnetconstruction.com',\n  email_subject: d.client_email_subject,\n  email_body: d.client_email_body\n}}];"
+      }
+    },
+    {
+      "id": "gmail-client",
+      "name": "Send Client Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1540, 0],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CONFIGURE_ME",
+          "name": "Gmail account"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.send_to }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailType": "html",
+        "message": "={{ $json.email_body }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "if-owner-alert",
+      "name": "Alert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1760, 0],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Build Canonical Job Record').item.json.owner_alert_needed }}",
+              "rightValue": "true",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "options": { "caseSensitive": true }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "code-prep-owner-alert",
+      "name": "Prep Owner Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, -180],
+      "parameters": {
+        "jsCode": "// Prep Vincent alert — blocked, stalled, or permit alert\nconst d = $('Build Canonical Job Record').item.json;\nreturn [{ json: {\n  send_to: 'vincent@gnetconstruction.com',\n  email_subject: d.owner_alert_subject,\n  email_body: d.owner_alert_body\n}}];"
+      }
+    },
+    {
+      "id": "gmail-owner",
+      "name": "Alert Vincent (Owner)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [2200, -180],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CONFIGURE_ME",
+          "name": "Gmail account"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.send_to }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailType": "html",
+        "message": "={{ $json.email_body }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "if-new-job-vincent",
+      "name": "Vincent Alert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1320, 400],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Build New Job Record').item.json.vincent_alert }}",
+              "rightValue": "yes",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "options": { "caseSensitive": true }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "gmail-new-job-vincent",
+      "name": "New Job Alert to Vincent",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1540, 400],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CONFIGURE_ME",
+          "name": "Gmail account"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "vincent@gnetconstruction.com",
+        "subject": "={{ 'New ' + $('Build New Job Record').item.json.job_type.replace('_', ' ') + ' job added to pipeline: ' + $('Build New Job Record').item.json.job_site }}",
+        "emailType": "html",
+        "message": "={{ '<h2>New Job Created</h2><p><b>Job ID:</b> ' + $('Build New Job Record').item.json.job_id + '</p><p><b>Site:</b> ' + $('Build New Job Record').item.json.job_site + '</p><p><b>Type:</b> ' + $('Build New Job Record').item.json.job_type.replace('_', ' ') + '</p><p><b>Client:</b> ' + $('Build New Job Record').item.json.client + '</p><p><b>Compliance Tags:</b> ' + ($('Build New Job Record').item.json.compliance_tags || []).join(', ') + '</p><p><b>Permits Required:</b> ' + ($('Build New Job Record').item.json.permits_required || []).join(', ') + '</p><p><b>Foreman:</b> ' + $('Build New Job Record').item.json.foreman + '</p>' }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "code-summary",
+      "name": "Dashboard Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2420, 0],
+      "parameters": {
+        "jsCode": "// Final webhook response — dashboard-ready JSON\nconst d = $('Build Canonical Job Record').item.json;\nconst alertSent = d.owner_alert_needed && $('Alert Needed?').item.json.output === undefined;\n\nreturn [{ json: {\n  success: true,\n  job_id: d.job_id,\n  job_site: d.job_site,\n  job_type: d.job_type,\n  percent_complete: d.percent_complete,\n  status: d.status,\n  status_emoji: d.status_emoji,\n  stalled: d.stalled_detection === 'yes',\n  permit_alert: d.permit_alert === 'yes',\n  foreman_summary: d.foreman_summary,\n  client_summary: d.client_summary,\n  next_milestone: d.next_milestone,\n  compliance_flags: d.compliance_flags,\n  actions: [\n    'AI classified as ' + (d.status || '').toUpperCase() + ' / ' + (d.job_type || '').toUpperCase(),\n    'Logged to Job Log sheet',\n    d.compliance_flags && d.compliance_flags.length > 0 ? 'Compliance flags logged' : 'No compliance flags this period',\n    'Client report sent',\n    d.owner_alert_needed ? 'VINCENT ALERTED — ' + (d.status === 'blocked' ? 'BLOCKED' : d.stalled_detection === 'yes' ? 'STALLED' : 'PERMIT ALERT') : 'No owner alert needed'\n  ].filter(Boolean),\n  processed_at: d.processed_at\n}}];"
+      }
+    },
+    {
+      "id": "code-new-job-summary",
+      "name": "New Job Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 400],
+      "parameters": {
+        "jsCode": "const d = $('Build New Job Record').item.json;\nreturn [{ json: {\n  success: true,\n  job_id: d.job_id,\n  job_site: d.job_site,\n  job_type: d.job_type,\n  compliance_tags: d.compliance_tags,\n  permits_required: d.permits_required,\n  reporting_cadence: d.reporting_cadence,\n  actions: ['Added to Pipeline sheet', d.vincent_alert === 'yes' ? 'Vincent alerted for hospital/school/flood job' : 'No Vincent alert needed'],\n  created_at: d.created_at\n}}];"
+      }
+    },
+    {
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 700],
+      "parameters": {}
+    },
+    {
+      "id": "code-error",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 700],
+      "parameters": {
+        "jsCode": "const e = $input.item.json;\nreturn [{ json: {\n  error: true,\n  error_message: e.message || 'Unknown error',\n  workflow: 'G-Net Construction Dashboard',\n  timestamp: new Date().toISOString()\n}}];"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Foreman Update": {
+      "main": [[{ "node": "Parse Foreman Update", "type": "main", "index": 0 }]]
+    },
+    "Parse Foreman Update": {
+      "main": [[{ "node": "AI Classify Job Type + Compliance", "type": "main", "index": 0 }]]
+    },
+    "AI Classify Job Type + Compliance": {
+      "main": [[{ "node": "Build Canonical Job Record", "type": "main", "index": 0 }]]
+    },
+    "Build Canonical Job Record": {
+      "main": [[{ "node": "Prep Job Log Row", "type": "main", "index": 0 }]]
+    },
+    "Prep Job Log Row": {
+      "main": [[{ "node": "Append to Job Log", "type": "main", "index": 0 }]]
+    },
+    "Append to Job Log": {
+      "main": [
+        [{ "node": "Prep Compliance Log Row", "type": "main", "index": 0 }],
+        [{ "node": "Prep Client Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prep Compliance Log Row": {
+      "main": [[{ "node": "Append Compliance Flags", "type": "main", "index": 0 }]]
+    },
+    "Append Compliance Flags": {
+      "main": [[{ "node": "Prep Client Email", "type": "main", "index": 0 }]]
+    },
+    "Prep Client Email": {
+      "main": [[{ "node": "Send Client Report", "type": "main", "index": 0 }]]
+    },
+    "Send Client Report": {
+      "main": [[{ "node": "Alert Needed?", "type": "main", "index": 0 }]]
+    },
+    "Alert Needed?": {
+      "main": [
+        [{ "node": "Prep Owner Alert", "type": "main", "index": 0 }],
+        [{ "node": "Dashboard Summary", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prep Owner Alert": {
+      "main": [[{ "node": "Alert Vincent (Owner)", "type": "main", "index": 0 }]]
+    },
+    "Alert Vincent (Owner)": {
+      "main": [[{ "node": "Dashboard Summary", "type": "main", "index": 0 }]]
+    },
+    "Webhook: New Job Created": {
+      "main": [[{ "node": "Parse New Job Data", "type": "main", "index": 0 }]]
+    },
+    "Parse New Job Data": {
+      "main": [[{ "node": "AI Classify New Job", "type": "main", "index": 0 }]]
+    },
+    "AI Classify New Job": {
+      "main": [[{ "node": "Build New Job Record", "type": "main", "index": 0 }]]
+    },
+    "Build New Job Record": {
+      "main": [
+        [{ "node": "Prep New Job Sheet Row", "type": "main", "index": 0 }],
+        [{ "node": "Vincent Alert Needed?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prep New Job Sheet Row": {
+      "main": [[{ "node": "Add to Pipeline", "type": "main", "index": 0 }]]
+    },
+    "Add to Pipeline": {
+      "main": [[{ "node": "New Job Summary", "type": "main", "index": 0 }]]
+    },
+    "Vincent Alert Needed?": {
+      "main": [
+        [{ "node": "New Job Alert to Vincent", "type": "main", "index": 0 }],
+        [{ "node": "New Job Summary", "type": "main", "index": 0 }]
+      ]
+    },
+    "New Job Alert to Vincent": {
+      "main": [[{ "node": "New Job Summary", "type": "main", "index": 0 }]]
+    },
+    "Error Trigger": {
+      "main": [[{ "node": "Error Handler", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
