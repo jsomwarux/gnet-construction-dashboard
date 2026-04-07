@@ -1,0 +1,19 @@
+import type { Metadata } from "next";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "G-Net Construction Dashboard",
+  description: "AI-powered multi-type construction project tracker",
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
