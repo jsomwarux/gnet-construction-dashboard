@@ -97,9 +97,16 @@ Each foreman update is classified with:
 ## Build Status
 
 - [x] CLAUDE.md (this file)
-- [ ] workflows/gnet-construction-dashboard.json
-- [ ] workflows/construction-dashboard-template.json
-- [ ] mock_data/gnet-jobs.json
-- [ ] dashboard/ (Next.js — Phase 2)
-- [ ] docs/gnet-brief.md
-- [ ] docs/dashboard-spec.md
+- [x] workflows/gnet-construction-dashboard.json  (472 lines, committed)
+- [x] workflows/construction-dashboard-template.json  (369 lines, committed)
+- [x] mock_data/gnet-jobs.json  (committed)
+- [x] dashboard/  (Next.js scaffold — committed)
+  - next.config.ts, tsconfig.json, tailwind.config.ts, postcss.config.mjs
+  - app/layout.tsx, app/globals.css, app/page.tsx (server component)
+  - components/Dashboard.tsx (client component, 369 lines)
+  - lib/sheets.ts (types exported)
+  - package.json + package-lock.json + @tailwindcss/postcss
+  - README.md, .env.local.example
+  - Build verified ✅ (3 routes, clean type check)
+- [x] docs/gnet-brief.md  (committed)
+- [x] docs/dashboard-spec.md  (UI/UX spec, committed)
